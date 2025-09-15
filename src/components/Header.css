@@ -1,0 +1,78 @@
+/* Base styles for the navigation bar */
+.Header {
+    background-color: #1f2937; /* bg-gray-800 */
+    border-bottom: 1px solid #374151; /* border-gray-700 */
+    padding: 1rem 1rem; /* px-4 py-4 */
+}
+
+/* Flex container for navbar content */
+.Header-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+/* Logo and title styling */
+.Header-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem; /* space-x-2 */
+}
+
+.Header-title {
+    font-size: 1.125rem; /* text-lg */
+    font-weight: 700; /* font-bold */
+    color: #60a5fa; /* text-blue-400 */
+}
+
+/* Container for navigation buttons */
+.nav-links {
+    display: flex;
+    gap: 0.5rem; /* space-x-2 */
+}
+
+/* Individual navigation buttons */
+.nav-btn {
+    padding: 0.5rem 1rem; /* px-4 py-2 */
+    border-radius: 0.5rem; /* rounded-lg */
+    font-weight: 500; /* font-medium */
+    font-size: 0.875rem; /* text-sm */
+    transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
+}
+
+/* System status and theme toggle section */
+.Header-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem; /* space-x-4 */
+}
+
+.system-status {
+    display: none; /* hidden */
+    align-items: center;
+    gap: 0.5rem; /* space-x-2 */
+}
+
+@media (min-width: 768px) { /* md: */
+    .system-status {
+        display: flex;
+    }
+}
+
+.status-indicator {
+    width: 0.75rem; /* w-3 */
+    height: 0.75rem; /* h-3 */
+    background-color: #22c55e; /* bg-green-500 */
+    border-radius: 9999px; /* rounded-full */
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.theme-toggle {
+    padding: 0.5rem; /* p-2 */
+    border-radius: 0.5rem; /* rounded-lg */
+    background-color: #374151; /* bg-gray-700 */
+}
+.theme-toggle:hover {
+    background-color: #4b5563; /* hover:bg-gray-600 */
+}
+
