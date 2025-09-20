@@ -22,7 +22,7 @@ from scipy.sparse import hstack
 def simulate_realistic_data(network_map, num_trains=500, records_per_train=5):
     """
     Generates a large, realistic dataset based on the real network map,
-    using real train numbers from the provided trains.json.
+    using real train numbers and their scheduled departure times.
     """
     print(f"Generating simulated data for {num_trains} trains...")
     
@@ -31,7 +31,7 @@ def simulate_realistic_data(network_map, num_trains=500, records_per_train=5):
         print("[Error] Network map is empty. Cannot generate data.")
         return pd.DataFrame()
 
-    print("  -> Loading trains.json to use real train numbers...")
+    print("  -> Loading trains.json and schedules.json for realistic simulation...")
     try:
         with open('trains.json', 'r', encoding='utf-8') as f:
             trains_data = json.load(f)
@@ -40,12 +40,20 @@ def simulate_realistic_data(network_map, num_trains=500, records_per_train=5):
             for train in trains_data['features']
             if train['properties'].get('zone') in ['SR', 'SWR'] and train['properties'].get('number')
         ]
-        if not sr_swr_train_numbers:
-            raise FileNotFoundError 
+        
+        schedules_df = pd.read_json('schedules.json')
+        schedules_df['train_number'] = schedules_df['train_number'].astype(str)
+        # Create a quick lookup for departure times
+        schedules_df = schedules_df[schedules_df['departure'] != 'None']
+        schedules_df['departure_hour'] = schedules_df['departure'].apply(lambda x: int(x.split(':')[0]))
+        departure_times = schedules_df.set_index(['train_number', 'station_code'])['departure_hour'].to_dict()
+
+        if not sr_swr_train_numbers: raise FileNotFoundError 
         print(f"  -> Found {len(sr_swr_train_numbers)} SR/SWR trains to use for simulation.")
-    except (FileNotFoundError, KeyError):
-        print("  -> [Warning] trains.json not found or invalid. Using generic train IDs.")
+    except Exception as e:
+        print(f"  -> [Warning] Could not load Kaggle data for simulation. Using generic values. Error: {e}")
         sr_swr_train_numbers = [f"SR_SWR_{1000 + i}" for i in range(num_trains)]
+        departure_times = {}
 
     train_types = ["Express", "Passenger", "Goods", "Superfast"]
     weather_conditions = ["Clear", "Rain", "Fog", "Storm", "Extreme Heat"]
@@ -71,7 +79,13 @@ def simulate_realistic_data(network_map, num_trains=500, records_per_train=5):
         for section in journey:
             for _ in range(records_per_train):
                 day_of_week = random.choice(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"])
-                hour_of_day = random.randint(0, 23)
+                
+                # --- REALISTIC TIME SIMULATION ---
+                base_hour = departure_times.get((train_number, section), random.randint(0, 23))
+                # Add slight variation (+/- 1 hour)
+                hour_of_day = (base_hour + random.choice([-1, 0, 1])) % 24
+                # --- END REALISTIC TIME SIMULATION ---
+
                 weather = random.choice(weather_conditions)
                 
                 base_delay = 0
@@ -187,13 +201,11 @@ async def lifespan(app: FastAPI):
         def time_to_minutes(row, column):
             time_str = row[column]
             day = row['day']
-            if time_str == 'None' or pd.isna(day):
-                return np.nan
+            if time_str == 'None' or pd.isna(day): return np.nan
             try:
                 parts = time_str.split(':')
                 return ((day - 1) * 1440) + (int(parts[0]) * 60) + int(parts[1])
-            except (ValueError, AttributeError):
-                return np.nan
+            except (ValueError, AttributeError): return np.nan
 
         schedules_df['arrival_minutes'] = schedules_df.apply(time_to_minutes, column='arrival', axis=1)
         schedules_df['departure_minutes'] = schedules_df.apply(time_to_minutes, column='departure', axis=1)
@@ -222,12 +234,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Railway Efficiency & Prediction API", lifespan=lifespan)
 
 class TrainInfo(BaseModel):
-    train_number: str = "12613"
-    track_section: str = "SBC"
-    day_of_week: str = "Monday"
-    hour_of_day: int = 10
-    weather_condition: str = "Clear"
-    trains_in_section_hour: int = 5
+    train_number: str = "12613"; track_section: str = "SBC"
+    day_of_week: str = "Monday"; hour_of_day: int = 10
+    weather_condition: str = "Clear"; trains_in_section_hour: int = 5
 
 class RouteRequest(BaseModel):
     route: List[str] = Field(..., example=["SBC", "KGI", "MYS"]); train_info: TrainInfo
@@ -292,7 +301,10 @@ def propose_reroute(info: TrainInfo):
     original_pred['route'] = f"{current_section} (Original)"
     results.append(original_pred)
     for next_section in alt_sections:
+        # FIX: Create a more realistic "what-if" scenario by varying traffic on alternatives
         what_if_info = info.model_copy(update={"track_section": next_section})
+        what_if_info.trains_in_section_hour = max(1, info.trains_in_section_hour + random.choice([-2, -1, 0, 1]))
+        
         predictions = get_full_prediction(what_if_info)
         predictions['route'] = f"{current_section} -> {next_section}"
         results.append(predictions)
@@ -312,7 +324,6 @@ def compare_efficiency(req: RouteRequest):
     schedules = models['schedules_df']
     train_schedule = schedules[schedules['train_number'] == req.train_info.train_number].sort_values('departure_minutes').reset_index()
 
-    # --- ROBUST ROUTE VALIDATION ---
     all_stations_in_schedule = set(train_schedule['station_code'])
     if not set(req.route).issubset(all_stations_in_schedule):
         missing_stations = list(set(req.route) - all_stations_in_schedule)
@@ -321,10 +332,9 @@ def compare_efficiency(req: RouteRequest):
     station_indices = {station: i for i, station in enumerate(train_schedule['station_code'])}
     route_indices = [station_indices.get(station) for station in req.route]
 
-    if not all(route_indices[i] < route_indices[i+1] for i in range(len(route_indices) - 1)):
+    if None in route_indices or not all(route_indices[i] < route_indices[i+1] for i in range(len(route_indices) - 1)):
         return {"error": "Invalid route. Stations are not in the correct chronological order for this train's schedule."}
 
-    # --- CALCULATION WITH VALIDATED DATA ---
     start_station_info = train_schedule.iloc[route_indices[0]]
     end_station_info = train_schedule.iloc[route_indices[-1]]
 
@@ -376,5 +386,4 @@ if __name__ == "__main__":
     print("\n--- SETUP COMPLETE ---")
     print("To run the API server, execute this command:")
     print("uvicorn train_and_serve:app --reload")
-
 
